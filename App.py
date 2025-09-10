@@ -1,115 +1,88 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pickle
+import warnings
 
-# --- Load Data and Model ---
-@st.cache_data
-def load_data():
-    """Loads and merges the datasets to get unique values for the UI."""
+warnings.filterwarnings("ignore")
+
+# === 1. Load the trained model ===
+# The app tries to load the pre-trained model file.
+# This assumes the 'bigmart_best_model.pkl' file is in the same directory.
+try:
+    with open("bigmart_best_model.pkl", "rb") as f:
+        model, version = pickle.load(f)
+    st.sidebar.success(f"Model loaded successfully (scikit-learn version: {version})")
+except FileNotFoundError:
+    st.error("Error: 'bigmart_best_model.pkl' not found. Please upload the file.")
+    st.stop()
+except Exception as e:
+    st.error(f"An error occurred while loading the model: {e}")
+    st.stop()
+
+
+# === 2. App Title and Description ===
+st.title("BigMart Sales Prediction")
+st.markdown("Use the form below to predict the sales of an item at a specific outlet.")
+
+# === 3. Input Form in Sidebar ===
+st.sidebar.header("Input Features")
+st.sidebar.markdown("Enter the details of the item and the outlet:")
+
+# Item Features
+item_weight = st.sidebar.number_input("Item Weight", min_value=1.0, max_value=25.0, value=15.5, step=0.1)
+item_fat_content = st.sidebar.selectbox("Item Fat Content", ('Low Fat', 'Regular'))
+item_visibility = st.sidebar.number_input("Item Visibility", min_value=0.0, max_value=0.3, value=0.07, step=0.01)
+item_type = st.sidebar.selectbox("Item Type", (
+    'Dairy', 'Soft Drinks', 'Meat', 'Fruits and Vegetables', 'Household',
+    'Baking Goods', 'Snack Foods', 'Frozen Foods', 'Breakfast',
+    'Health and Hygiene', 'Hard Drinks', 'Canned', 'Breads',
+    'Starchy Foods', 'Others', 'Seafood'
+))
+item_mrp = st.sidebar.number_input("Item MRP", min_value=30.0, max_value=300.0, value=150.0, step=1.0)
+
+# Outlet Features
+outlet_establishment_year = st.sidebar.number_input("Outlet Establishment Year", min_value=1985, max_value=2025, value=2000, step=1)
+outlet_size = st.sidebar.selectbox("Outlet Size", ('Small', 'Medium', 'High'))
+outlet_location_type = st.sidebar.selectbox("Outlet Location Type", ('Tier 1', 'Tier 2', 'Tier 3'))
+outlet_type = st.sidebar.selectbox("Outlet Type", (
+    'Supermarket Type1', 'Supermarket Type2', 'Supermarket Type3', 'Grocery Store'
+))
+
+# === 4. Prediction Logic ===
+if st.sidebar.button("Predict Sales"):
+    # Create a DataFrame from user inputs.
+    # The model expects 'Item_Identifier' and 'Outlet_Identifier' to be present.
+    # We use a placeholder value since the one-hot encoder handles it.
+    input_data = pd.DataFrame([{
+        'Item_Identifier': 'FDX07', # Placeholder
+        'Item_Weight': item_weight,
+        'Item_Fat_Content': item_fat_content,
+        'Item_Visibility': item_visibility,
+        'Item_Type': item_type,
+        'Item_MRP': item_mrp,
+        'Outlet_Identifier': 'OUT027', # Placeholder
+        'Outlet_Establishment_Year': outlet_establishment_year,
+        'Outlet_Size': outlet_size,
+        'Outlet_Location_Type': outlet_location_type,
+        'Outlet_Type': outlet_type,
+    }])
+    
+    # Feature Engineering (must match the training script)
+    input_data['Outlet_Age'] = 2025 - input_data['Outlet_Establishment_Year']
+    input_data.drop('Outlet_Establishment_Year', axis=1, inplace=True)
+    
+    # Make prediction using the loaded model
     try:
-        df_item = pd.read_xml('df_item.xml')
-        df_outlet = pd.read_xml('df_outlet.xml')
-        df_sales = pd.read_xml('df_sales.xml')
-
-        # Combine the dataframes to get all unique values for dropdowns.
-        # This is for UI purposes and is not the full preprocessing logic for the model.
-        df_merged = pd.merge(df_item, df_outlet, on='ID', how='left')
-        
-        return df_merged
-    except FileNotFoundError as e:
-        st.error(f"Error: A required file was not found: {e.filename}. Please ensure 'df_item.xml', 'df_outlet.xml', and 'df_sales.xml' are in the same directory.")
-        return None
+        prediction = model.predict(input_data)[0]
+        # Display the result
+        st.subheader("Predicted Item Outlet Sales")
+        st.success(f"${prediction:,.2f}")
+        st.balloons()
     except Exception as e:
-        st.error(f"An unexpected error occurred while loading data: {e}")
-        return None
+        st.error(f"An error occurred during prediction: {e}")
 
-@st.cache_resource
-def load_model():
-    """Loads the pickled machine learning model."""
-    try:
-        with open('bigmart_best_model.pkl', 'rb') as f:
-            model = pickle.load(f)
-        return model
-    except FileNotFoundError:
-        st.error("Error: The 'bigmart_best_model.pkl' file was not found. Please ensure it is in the same directory.")
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred while loading the model: {e}")
-        return None
-
-data = load_data()
-model = load_model()
-
-# --- Main Application Logic ---
-if data is not None and model is not None:
-    
-    # Set up the page configuration
-    st.set_page_config(
-        page_title="BigMart Sales Predictor",
-        page_icon="🛒",
-        layout="wide"
-    )
-
-    st.title("🛒 BigMart Sales Prediction App")
-    st.markdown("Use this app to predict the sales of an item at a specific outlet based on the trained model.")
-
-    # Get unique values for dropdowns from the merged data
-    item_types = sorted(data['Item_Type'].unique())
-    fat_contents = sorted(data['Item_Fat_Content'].replace({'low fat': 'Low Fat', 'LF': 'Low Fat', 'reg': 'Regular'}).unique())
-    outlet_sizes = sorted(data['Outlet_Size'].unique())
-    outlet_location_types = sorted(data['Outlet_Location_Type'].unique())
-    outlet_types = sorted(data['Outlet_Type'].unique())
-    
-    # Identify unique identifiers for placeholders
-    item_identifiers = sorted(data['Item_Identifier'].unique())
-    outlet_identifiers = sorted(data['Outlet_Identifier'].unique())
-
-    # Create input columns for better layout
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.header("Item Details")
-        item_identifier = st.selectbox("Item Identifier", item_identifiers)
-        item_weight = st.number_input("Item Weight", value=12.0, min_value=0.1, max_value=25.0, step=0.1)
-        item_fat_content = st.selectbox("Item Fat Content", fat_contents)
-        item_visibility = st.number_input("Item Visibility", value=0.07, min_value=0.0, max_value=0.3, step=0.01, format="%.2f")
-        item_type = st.selectbox("Item Type", item_types)
-        item_mrp = st.number_input("Item MRP", value=150.0, min_value=1.0, max_value=300.0, step=1.0, format="%.2f")
-    
-    with col2:
-        st.header("Outlet Details")
-        outlet_identifier = st.selectbox("Outlet Identifier", outlet_identifiers)
-        outlet_establishment_year = st.number_input("Outlet Establishment Year", value=2000, min_value=1985, max_value=2015, step=1)
-        outlet_size = st.selectbox("Outlet Size", outlet_sizes)
-        outlet_location_type = st.selectbox("Outlet Location Type", outlet_location_types)
-        outlet_type = st.selectbox("Outlet Type", outlet_types)
-
-    # --- Prediction Logic ---
-    if st.button("Predict Sales"):
-        # Create a single row DataFrame from user inputs, including the required columns
-        input_df = pd.DataFrame([{
-            'Item_Identifier': item_identifier,
-            'Item_Weight': item_weight,
-            'Item_Fat_Content': item_fat_content,
-            'Item_Visibility': item_visibility,
-            'Item_Type': item_type,
-            'Item_MRP': item_mrp,
-            'Outlet_Identifier': outlet_identifier,
-            'Outlet_Establishment_Year': outlet_establishment_year,
-            'Outlet_Size': outlet_size,
-            'Outlet_Location_Type': outlet_location_type,
-            'Outlet_Type': outlet_type,
-        }])
-        
-        try:
-            # Make the prediction using the loaded model pipeline
-            prediction = model.predict(input_df)
-            predicted_sales = prediction[0]
-
-            st.markdown("---")
-            st.subheader("Predicted Sales")
-            st.success(f"The predicted Item Outlet Sales are: **${predicted_sales:,.2f}**")
-            st.balloons()
-
-        except Exception as e:
-            st.error(f"An error occurred during prediction: {e}")
+# === 5. Footer ===
+st.markdown("---")
+st.markdown("Built with ❤️ using Streamlit and a pre-trained machine learning model.")
+st.markdown("The app predicts the `Item_Outlet_Sales` using features such as item properties and outlet characteristics. ")
